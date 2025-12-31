@@ -7,22 +7,30 @@ import com.sk89q.worldedit.bukkit.BukkitWorld;
 import com.sk89q.worldedit.bukkit.WorldEditPlugin;
 import com.sk89q.worldedit.schematic.SchematicFormat;
 
-import ga.strikepractice.StrikePractice;
-import ga.strikepractice.events.DuelEndEvent;
 import ga.strikepractice.arena.Arena;
+import ga.strikepractice.events.BotDuelEndEvent;
+import ga.strikepractice.events.DuelEndEvent;
+import ga.strikepractice.events.PartyFFAEndEvent;
+import ga.strikepractice.events.PartySplitEndEvent;
+import ga.strikepractice.events.PartyVsBotsEndEvent;
+import ga.strikepractice.events.PartyVsPartyEndEvent;
+import ga.strikepractice.events.PvPEventEndEvent;
 
-import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitRunnable;
 
 import java.io.File;
 
 public class ArenaResetPlugin extends JavaPlugin implements Listener {
 
     private WorldEditPlugin worldEdit;
+    // 设置延迟时间 (4秒 = 80 ticks)
+    private static final long RESET_DELAY_SECONDS = 4;
 
     @Override
     public void onEnable() {
@@ -34,12 +42,12 @@ public class ArenaResetPlugin extends JavaPlugin implements Listener {
             setEnabled(false);
             return;
         }
-        getCommand("tparena").setExecutor(new ArenaTeleporter());
-        // 依然保留 saveall 指令，虽然你现在用手动保存了，但留着也没坏处
+
         getCommand("saveallarenas").setExecutor(new ArenaSaver(this));
+        getCommand("tparena").setExecutor(new ArenaTeleporter());
 
         getServer().getPluginManager().registerEvents(this, this);
-        getLogger().info("ArenaReset 已加载! (智能模板映射版)");
+        getLogger().info("ArenaReset 已加载! (延迟重置 + PvPEvent修复版)");
 
         File schemDir = new File(getDataFolder(), "schematics");
         if (!schemDir.exists()) {
@@ -47,64 +55,116 @@ public class ArenaResetPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    @EventHandler
+    // ==========================================
+    //            事件监听区域
+    // ==========================================
+
+    @EventHandler(priority = EventPriority.MONITOR)
     public void onDuelEnd(DuelEndEvent event) {
-        if (event.getFight() == null || event.getFight().getArena() == null) return;
+        if (event.getFight() != null) {
+            scheduleReset(event.getFight().getArena());
+        }
+    }
 
-        Arena arena = event.getFight().getArena();
-        String arenaName = arena.getName(); // 例如 "Arenas_1:1" 或 "Arenas_2:sumo10"
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onBotDuelEnd(BotDuelEndEvent event) {
+        if (event.getFight() != null) {
+            scheduleReset(event.getFight().getArena());
+        }
+    }
 
-        // --- 智能解析文件名 ---
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPartyVsPartyEnd(PartyVsPartyEndEvent event) {
+        if (event.getFight() != null) {
+            scheduleReset(event.getFight().getArena());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPartySplitEnd(PartySplitEndEvent event) {
+        if (event.getFight() != null) {
+            scheduleReset(event.getFight().getArena());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPartyFFAEnd(PartyFFAEndEvent event) {
+        if (event.getFight() != null) {
+            scheduleReset(event.getFight().getArena());
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPartyVsBotsEnd(PartyVsBotsEndEvent event) {
+        if (event.getFight() != null) {
+            scheduleReset(event.getFight().getArena());
+        }
+    }
+
+
+     //大型活动 (Sumo/LMS/Brackets 等) 结束
+
+
+
+
+    // ==========================================
+    //            核心延迟重置逻辑
+    // ==========================================
+
+    private void scheduleReset(final Arena arena) {
+        if (arena == null) return;
+
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                performReset(arena);
+            }
+        }.runTaskLater(this, RESET_DELAY_SECONDS * 20L); // 80 ticks
+    }
+
+    private void performReset(Arena arena) {
+        String arenaName = arena.getName();
         String templateName;
 
-        // 如果名字里包含冒号 (说明是克隆体)
+        // 智能解析: "Arenas_1:2" -> "2"
         if (arenaName.contains(":")) {
-            // 提取冒号后面的部分。例如 "Arenas_1:1" -> "1"
             templateName = arenaName.substring(arenaName.lastIndexOf(":") + 1);
         } else {
-            // 如果没有冒号，就用原名
             templateName = arenaName;
         }
 
-        // 寻找对应的 Schematic 文件 (例如 1.schematic)
         File schemFile = new File(getDataFolder() + "/schematics", templateName + ".schematic");
 
         if (!schemFile.exists()) {
-            // 如果找不到 1.schematic，尝试找一下全名 Arenas_1_1.schematic (作为备用方案)
             String fallbackName = arenaName.replace(":", "_");
             File fallbackFile = new File(getDataFolder() + "/schematics", fallbackName + ".schematic");
 
             if (fallbackFile.exists()) {
                 schemFile = fallbackFile;
             } else {
-                // 如果都找不到，那就没办法了
-                // getLogger().warning("未找到模板文件: " + templateName + ".schematic");
                 return;
             }
         }
 
-        // 获取粘贴位置
         Location pasteLoc = arena.getLoc1();
-
-        // 执行粘贴
-        pasteArena(schemFile, pasteLoc);
+        if (pasteLoc != null && pasteLoc.getWorld() != null) {
+            pasteSchematic(schemFile, pasteLoc);
+        }
     }
 
-    private void pasteArena(File file, Location loc) {
+    private void pasteSchematic(File file, Location loc) {
         try {
             SchematicFormat format = SchematicFormat.getFormat(file);
-            if (format == null) format = SchematicFormat.MCEDIT; // 强制兼容
+            if (format == null) format = SchematicFormat.MCEDIT;
 
             CuboidClipboard clipboard = format.load(file);
             EditSession session = worldEdit.getWorldEdit().getEditSessionFactory().getEditSession(new BukkitWorld(loc.getWorld()), -1);
 
-            // 粘贴 (false = 不忽略空气，覆盖掉玩家放的方块)
             clipboard.paste(session, new Vector(loc.getX(), loc.getY(), loc.getZ()), false);
-
-            getLogger().info("已重置: " + file.getName()); // 觉得刷屏可以注释掉
 
         } catch (Exception e) {
             e.printStackTrace();
+            getLogger().warning("重置竞技场时出错: " + file.getName());
         }
     }
 }
