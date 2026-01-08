@@ -3,7 +3,7 @@ plugins {
 }
 
 group = 'com.micet'
-version = '1.0-SNAPSHOT'
+version = '1.1-SNAPSHOT'
 
 // 基础兼容性设置
 sourceCompatibility = '1.8'
@@ -21,6 +21,8 @@ dependencies {
     compileOnly name: 'spigot-1.7.10'
     compileOnly name: 'WorldEdit'
     compileOnly name: 'StrikePractice'
+    compileOnly name: 'ProtocolLib 1.7.10'
+    compileOnly name: 'ga.strikepractice:strikepractice-api'
 
     compileOnly 'org.projectlombok:lombok:1.18.24'
     annotationProcessor 'org.projectlombok:lombok:1.18.24'

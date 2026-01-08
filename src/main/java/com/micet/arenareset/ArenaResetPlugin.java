@@ -8,13 +8,7 @@ import com.sk89q.worldedit.bukkit.WorldEditPlugin;
 import com.sk89q.worldedit.schematic.SchematicFormat;
 
 import ga.strikepractice.arena.Arena;
-import ga.strikepractice.events.BotDuelEndEvent;
-import ga.strikepractice.events.DuelEndEvent;
-import ga.strikepractice.events.PartyFFAEndEvent;
-import ga.strikepractice.events.PartySplitEndEvent;
-import ga.strikepractice.events.PartyVsBotsEndEvent;
-import ga.strikepractice.events.PartyVsPartyEndEvent;
-import ga.strikepractice.events.PvPEventEndEvent;
+import ga.strikepractice.events.*;
 
 import org.bukkit.Location;
 import org.bukkit.event.EventHandler;
@@ -23,18 +17,18 @@ import org.bukkit.event.Listener;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
-
+import com.micet.arenareset.HungerManager;
 import java.io.File;
 
 public class ArenaResetPlugin extends JavaPlugin implements Listener {
-
+    private MisplaceManager misplaceManager;
     private WorldEditPlugin worldEdit;
+
     // 设置延迟时间 (4秒 = 80 ticks)
-    private static final long RESET_DELAY_SECONDS = 4;
+    private static final long RESET_DELAY_SECONDS = 5;
 
     @Override
     public void onEnable() {
-        getServer().getPluginManager().registerEvents(new GlitchFixer(this), this);
         Plugin we = getServer().getPluginManager().getPlugin("WorldEdit");
         if (we instanceof WorldEditPlugin) {
             this.worldEdit = (WorldEditPlugin) we;
@@ -44,16 +38,32 @@ public class ArenaResetPlugin extends JavaPlugin implements Listener {
             return;
         }
 
+        // 初始化饥饿控制模块
+        new HungerManager(this);
+        getLogger().info("饥饿控制模块已加载 (饥饿速度已减缓)");
+
+        // 1. 初始化 Misplace 功能模块
+        this.misplaceManager = new MisplaceManager(this);
+        getLogger().info("Misplace 模块已加载！默认关闭，使用 /misplace 开启。");
+
+        // 2. 注册指令
         getCommand("saveallarenas").setExecutor(new ArenaSaver(this));
         getCommand("tparena").setExecutor(new ArenaTeleporter());
+        getCommand("misplace").setExecutor(new MisplaceCommand(this)); // [新增] 注册 Misplace 指令
 
+        // 3. 注册监听器
         getServer().getPluginManager().registerEvents(this, this);
-        getLogger().info("ArenaReset 已加载! (延迟重置 + PvPEvent修复版)");
+        getLogger().info("ArenaReset 已加载! (延迟重置 + Misplace集成版)");
 
         File schemDir = new File(getDataFolder(), "schematics");
         if (!schemDir.exists()) {
             schemDir.mkdirs();
         }
+    }
+
+    // [新增] 提供给 Command 类使用的方法
+    public MisplaceManager getMisplaceManager() {
+        return misplaceManager;
     }
 
     // ==========================================
@@ -62,51 +72,33 @@ public class ArenaResetPlugin extends JavaPlugin implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onDuelEnd(DuelEndEvent event) {
-        if (event.getFight() != null) {
-            scheduleReset(event.getFight().getArena());
-        }
+        if (event.getFight() != null) scheduleReset(event.getFight().getArena());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onBotDuelEnd(BotDuelEndEvent event) {
-        if (event.getFight() != null) {
-            scheduleReset(event.getFight().getArena());
-        }
+        if (event.getFight() != null) scheduleReset(event.getFight().getArena());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPartyVsPartyEnd(PartyVsPartyEndEvent event) {
-        if (event.getFight() != null) {
-            scheduleReset(event.getFight().getArena());
-        }
+        if (event.getFight() != null) scheduleReset(event.getFight().getArena());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPartySplitEnd(PartySplitEndEvent event) {
-        if (event.getFight() != null) {
-            scheduleReset(event.getFight().getArena());
-        }
+        if (event.getFight() != null) scheduleReset(event.getFight().getArena());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPartyFFAEnd(PartyFFAEndEvent event) {
-        if (event.getFight() != null) {
-            scheduleReset(event.getFight().getArena());
-        }
+        if (event.getFight() != null) scheduleReset(event.getFight().getArena());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPartyVsBotsEnd(PartyVsBotsEndEvent event) {
-        if (event.getFight() != null) {
-            scheduleReset(event.getFight().getArena());
-        }
+        if (event.getFight() != null) scheduleReset(event.getFight().getArena());
     }
-
-
-     //大型活动 (Sumo/LMS/Brackets 等) 结束
-
-
-
 
     // ==========================================
     //            核心延迟重置逻辑
@@ -120,14 +112,13 @@ public class ArenaResetPlugin extends JavaPlugin implements Listener {
             public void run() {
                 performReset(arena);
             }
-        }.runTaskLater(this, RESET_DELAY_SECONDS * 20L); // 80 ticks
+        }.runTaskLater(this, RESET_DELAY_SECONDS * 20L); // 修正: 20 ticks = 1秒，之前写的25L有点奇怪
     }
 
     private void performReset(Arena arena) {
         String arenaName = arena.getName();
         String templateName;
 
-        // 智能解析: "Arenas_1:2" -> "2"
         if (arenaName.contains(":")) {
             templateName = arenaName.substring(arenaName.lastIndexOf(":") + 1);
         } else {
