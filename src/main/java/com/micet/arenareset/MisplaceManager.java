@@ -128,7 +128,7 @@ public class MisplaceManager implements Listener {
         kitDelaySettings.put("boxing", 2);
         kitDelaySettings.put("builduhc", 0);
         kitDelaySettings.put("sumo", 0);
-        kitDelaySettings.put("combo", 1);
+        kitDelaySettings.put("combo", 0);
         kitDelaySettings.put("gapple", 1);
         kitDelaySettings.put("diamond", 1);
         kitDelaySettings.put("enderpot", 1);
