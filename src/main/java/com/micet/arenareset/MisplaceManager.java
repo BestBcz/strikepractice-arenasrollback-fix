@@ -8,13 +8,16 @@ import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.events.PacketEvent;
 
 // --- StrikePractice Imports ---
+import ga.strikepractice.StrikePractice;
 import ga.strikepractice.battlekit.BattleKit;
 import ga.strikepractice.events.BotDuelEndEvent;
 import ga.strikepractice.events.DuelEndEvent;
-import ga.strikepractice.events.KitSelectEvent;
 import ga.strikepractice.events.KitDeselectEvent;
+import ga.strikepractice.events.KitSelectEvent;
+// ------------------------------
 
 import org.bukkit.Bukkit;
+import org.bukkit.World; // 导入 World
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -39,7 +42,6 @@ public class MisplaceManager implements Listener {
     private static final long ATTACK_WINDOW_MS = 2000;
     private static final long DAMAGE_WINDOW_MS = 500;
 
-    // UUID -> Delay Ticks
     private final Map<UUID, Integer> playerKitDelayCache = new ConcurrentHashMap<>();
 
     private final Map<UUID, Long> lastAttackTime = new ConcurrentHashMap<>();
@@ -68,16 +70,14 @@ public class MisplaceManager implements Listener {
             }
         });
 
-        // 异步清理任务
+        // 1. 异步清理任务
         new BukkitRunnable() {
             @Override
             public void run() {
                 long now = System.currentTimeMillis();
-
                 lastAttackTime.values().removeIf(t -> now - t > 10000);
                 lastDamageTime.values().removeIf(t -> now - t > 10000);
 
-                // 清理离线玩家数据
                 Iterator<UUID> cacheIt = playerKitDelayCache.keySet().iterator();
                 while (cacheIt.hasNext()) {
                     UUID uuid = cacheIt.next();
@@ -88,6 +88,39 @@ public class MisplaceManager implements Listener {
                 }
             }
         }.runTaskTimerAsynchronously(plugin, 1200L, 1200L);
+
+        // 2. [核心修复] 同步状态检查任务
+        new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (!isEnabled) return;
+
+                // --- 修复开始：绕过 ambiguous method call 错误 ---
+                // 不直接调用 Bukkit.getOnlinePlayers()，而是遍历世界
+                for (World world : Bukkit.getWorlds()) {
+                    for (Player player : world.getPlayers()) {
+                        // ----------------------------------------------
+
+                        UUID uuid = player.getUniqueId();
+
+                        // 如果缓存里已经有这个玩家了，跳过
+                        if (playerKitDelayCache.containsKey(uuid)) continue;
+
+                        // 检查玩家是否在战斗中 (利用 API)
+                        if (StrikePractice.getAPI().getFight(player) != null) {
+                            try {
+                                Object kitObj = StrikePractice.getAPI().getKit(player);
+                                if (kitObj instanceof BattleKit) {
+                                    updatePlayerCache(player, (BattleKit) kitObj);
+                                }
+                            } catch (Exception e) {
+                                // ignore
+                            }
+                        }
+                    }
+                }
+            }
+        }.runTaskTimer(plugin, 100L, 100L);
     }
 
     private void setupKitSettings() {
@@ -95,26 +128,25 @@ public class MisplaceManager implements Listener {
         kitDelaySettings.put("boxing", 2);
         kitDelaySettings.put("builduhc", 0);
         kitDelaySettings.put("sumo", 0);
-        kitDelaySettings.put("combo", 0);
+        kitDelaySettings.put("combo", 1);
         kitDelaySettings.put("gapple", 1);
         kitDelaySettings.put("diamond", 1);
         kitDelaySettings.put("enderpot", 1);
         kitDelaySettings.put("debuff", 1);
     }
 
-    // 获取指定玩家的 Misplace 延迟值 (供指令调用)
     public int getPlayerDelay(Player player) {
         return playerKitDelayCache.getOrDefault(player.getUniqueId(), 0);
     }
 
-    //核心事件监听
+    // --- 事件监听 ---
+
     @EventHandler(priority = EventPriority.MONITOR)
     public void onKitSelect(KitSelectEvent event) {
         BattleKit kit = event.getKit();
         updatePlayerCache(event.getPlayer(), kit);
     }
 
-    // 监听玩家取消 Kit 选择
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onKitDeselect(KitDeselectEvent event) {
         clearPlayerCache(event.getPlayer());
@@ -136,14 +168,11 @@ public class MisplaceManager implements Listener {
         clearPlayerCache(event.getPlayer());
     }
 
-    // 辅助方法：清除玩家缓存
     private void clearPlayerCache(Player player) {
         if (player != null) {
             playerKitDelayCache.remove(player.getUniqueId());
         }
     }
-
-    //缓存更新逻辑
 
     private void updatePlayerCache(Player player, BattleKit kit) {
         if (kit == null) {
@@ -162,7 +191,7 @@ public class MisplaceManager implements Listener {
         playerKitDelayCache.put(player.getUniqueId(), delay);
     }
 
-    //战斗状态监听
+    // --- 战斗状态监听 ---
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onCombat(EntityDamageByEntityEvent event) {
@@ -178,7 +207,7 @@ public class MisplaceManager implements Listener {
         }
     }
 
-    //数据包处理
+    // --- 数据包处理 ---
 
     private void handleMovePacket(PacketEvent event) {
         final Player receiver = event.getPlayer();
